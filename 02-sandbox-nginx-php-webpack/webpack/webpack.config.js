@@ -1,0 +1,138 @@
+const path = require('path');
+const glob = require('glob');
+const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+const CssMinimizerPlugin = require('css-minimizer-webpack-plugin');
+const RemoveEmptyScriptsPlugin = require('webpack-remove-empty-scripts');
+const CopyWebpackPlugin = require('copy-webpack-plugin');
+const { minify } = require('html-minifier-terser');
+
+const PhpFunctionsBundlePlugin = require('./plugins/php-functions-bundle');
+const { execFileSync } = require('child_process');
+
+
+const isProd = process.env.NODE_ENV === 'production';
+const distPath = 'www';
+
+// Orden alfabético — importa si tus estilos/scripts dependen del orden
+const jsFiles = glob.sync('./sources/JS/*.js').sort().map(f => './' + f);
+const cssFiles = glob.sync('./sources/CSS/*.css').sort().map(f => './' + f);
+
+
+console.log('JS encontrados:', jsFiles);
+console.log('CSS encontrados:', cssFiles);
+
+
+module.exports = {
+
+	// Webpack cambiará entre "production" y "development" automáticamente según la variable
+    mode: isProd ? 'production' : 'development',
+	// mode: "development"
+	// mode: "production",
+
+	watch: true, // <-- Habilita el modo watcher continuo
+	cache: { type: 'filesystem' },
+
+
+	entry: {
+		main: jsFiles,     // -> www/_main.js
+		styles: cssFiles,  // -> www/_main.css (vía MiniCssExtractPlugin)
+	},
+	output: {
+		path: path.resolve(__dirname, distPath),
+		filename: '_[name].js', // genera _main.js
+	},
+
+
+
+	plugins: [
+		new RemoveEmptyScriptsPlugin(), // evita que se genere un _styles.js vacío
+		new MiniCssExtractPlugin({
+			filename: '_main.css',
+		}),
+
+		new CopyWebpackPlugin({
+			patterns: [
+				{
+					from: 'sources/HTML/*.html',
+					to: 'HTML/[name][ext]', // -> www/HTML/archivo.html
+					transform: {
+						transformer: async (content) => {
+							return await minify(content.toString(), {
+								collapseWhitespace: true,
+								removeComments: true,
+								minifyCSS: true,
+								minifyJS: true,
+								removeRedundantAttributes: true,
+								removeScriptTypeAttributes: true,
+								removeStyleLinkTypeAttributes: true,
+								useShortDoctype: true,
+							});
+						},
+					},
+				},
+				{
+					from: 'sources/PHP-classes/*.php',
+					to: 'classes/[name][ext]', // -> www/classes/NombreClase.php
+					transform: {
+						transformer: (content, absoluteFrom) => {
+							// php_strip_whitespace necesita una ruta de archivo real,
+							// así que usamos absoluteFrom en vez del content en memoria
+							return execFileSync('php', [
+								'-r', 'echo php_strip_whitespace($argv[1]);', '--', absoluteFrom,
+							]);
+						},
+					},
+				},
+
+				{
+					from: 'sources/PHP-scripts/*.php',
+					to: 'scripts/[name][ext]', // -> www/scripts/Nombre-scripts.php
+					transform: {
+						transformer: (content, absoluteFrom) => {
+							// php_strip_whitespace necesita una ruta de archivo real,
+							// así que usamos absoluteFrom en vez del content en memoria
+							return execFileSync('php', [
+								'-r', 'echo php_strip_whitespace($argv[1]);', '--', absoluteFrom,
+							]);
+						},
+					},
+				},
+
+
+
+
+			],
+		}),
+
+
+		new PhpFunctionsBundlePlugin({
+			pattern: './sources/PHP-functions/*.php',
+			outputFilename: '_functions.php',
+		}),
+
+
+
+
+
+	],
+
+	module: {
+		rules: [
+			{
+				test: /\.css$/i,
+				use: [
+					MiniCssExtractPlugin.loader,
+					{ loader: 'css-loader', options: { url: false } },
+				],
+			},
+		],
+	},
+	
+	optimization: {
+		minimizer: ['...', new CssMinimizerPlugin()],
+	},
+
+
+
+
+};
